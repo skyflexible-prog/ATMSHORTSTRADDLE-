@@ -170,12 +170,22 @@ class DeltaExchangeClient:
             return 0.0
     
     async def find_atm_options(self, spot_price: float) -> Dict[str, Optional[Dict]]:
-        """Find ATM call and put options for same day expiry"""
-        try:
-            # Get today's date for same day expiry
-            today = datetime.now().strftime("%d-%m-%Y")
-            
-            # Get BTC options
+    """Find ATM call and put options for same day expiry"""
+    try:
+        # Get today's date in DD-MM-YYYY format as per Delta Exchange API
+        from datetime import datetime
+        today = datetime.now().strftime("%d-%m-%Y")
+        
+        # Get option chain for today's expiry using proper API endpoint
+        option_chain = await self._make_request('GET', '/tickers', {
+            'contract_types': 'call_options,put_options',
+            'underlying_asset_symbols': 'BTC',
+            'expiry_date': today
+        })
+        
+        if not option_chain.get('success'):
+            logger.error(f"Failed to get option chain: {option_chain}")
+            # Try D1 (expires within 24 hours) if today's date doesn't work
             products = await self._make_request('GET', '/products', {
                 'contract_types': 'call_options,put_options'
             })
@@ -183,27 +193,108 @@ class DeltaExchangeClient:
             if not products.get('success'):
                 return {'call': None, 'put': None}
             
-            call_option = None
-            put_option = None
-            min_diff = float('inf')
+            return self._find_closest_expiry_options(products['result'], spot_price)
+        
+        return self._find_atm_from_chain(option_chain['result'], spot_price)
+        
+    except Exception as e:
+        logger.error(f"Failed to find ATM options: {e}")
+        return {'call': None, 'put': None}
+
+def _find_atm_from_chain(self, options_data: List[Dict], spot_price: float) -> Dict[str, Optional[Dict]]:
+    """Find ATM options from option chain data"""
+    call_option = None
+    put_option = None
+    min_call_diff = float('inf')
+    min_put_diff = float('inf')
+    
+    for option in options_data:
+        if not option.get('strike_price'):
+            continue
             
-            for product in products['result']:
-                if product['underlying_asset']['symbol'] == 'BTC':
-                    # Check if it's same day expiry (you might need to adjust this logic)
-                    strike_price = float(product.get('strike_price', 0))
-                    diff = abs(strike_price - spot_price)
+        strike_price = float(option['strike_price'])
+        diff = abs(strike_price - spot_price)
+        
+        # Find closest call option
+        if option.get('contract_type') == 'call_options' and diff < min_call_diff:
+            min_call_diff = diff
+            call_option = {
+                'id': option['product_id'],
+                'symbol': option['symbol'],
+                'strike_price': strike_price,
+                'contract_type': 'call_options'
+            }
+        
+        # Find closest put option  
+        elif option.get('contract_type') == 'put_options' and diff < min_put_diff:
+            min_put_diff = diff
+            put_option = {
+                'id': option['product_id'],
+                'symbol': option['symbol'], 
+                'strike_price': strike_price,
+                'contract_type': 'put_options'
+            }
+    
+    return {'call': call_option, 'put': put_option}
+
+def _find_closest_expiry_options(self, products_data: List[Dict], spot_price: float) -> Dict[str, Optional[Dict]]:
+    """Find options with closest expiry (fallback method)"""
+    from datetime import datetime, timedelta
+    
+    call_option = None
+    put_option = None
+    min_call_diff = float('inf')
+    min_put_diff = float('inf')
+    today = datetime.now().date()
+    
+    for product in products_data:
+        if product['underlying_asset']['symbol'] != 'BTC':
+            continue
+            
+        # Check if it's a same-day or next-day expiry option
+        settlement_time = product.get('settlement_time')
+        if settlement_time:
+            try:
+                # Parse settlement time and check if it's today or tomorrow
+                settlement_date = datetime.fromisoformat(settlement_time.replace('Z', '+00:00')).date()
+                days_diff = (settlement_date - today).days
+                
+                # Only consider options expiring today (0) or tomorrow (1) for same-day strategy
+                if days_diff > 1:
+                    continue
                     
-                    if diff < min_diff:
-                        min_diff = diff
-                        if product['contract_type'] == 'call_options':
-                            call_option = product
-                        elif product['contract_type'] == 'put_options':
-                            put_option = product
+            except (ValueError, TypeError):
+                # If we can't parse the date, skip this option
+                continue
+        
+        strike_price = float(product.get('strike_price', 0))
+        if strike_price == 0:
+            continue
             
-            return {'call': call_option, 'put': put_option}
-        except Exception as e:
-            logger.error(f"Failed to find ATM options: {e}")
-            return {'call': None, 'put': None}
+        diff = abs(strike_price - spot_price)
+        
+        # Find closest call option
+        if product['contract_type'] == 'call_options' and diff < min_call_diff:
+            min_call_diff = diff
+            call_option = {
+                'id': product['id'],
+                'symbol': product['symbol'],
+                'strike_price': strike_price,
+                'contract_type': 'call_options'
+            }
+        
+        # Find closest put option
+        elif product['contract_type'] == 'put_options' and diff < min_put_diff:
+            min_put_diff = diff
+            put_option = {
+                'id': product['id'],
+                'symbol': product['symbol'],
+                'strike_price': strike_price,
+                'contract_type': 'put_options'
+            }
+    
+    return {'call': call_option, 'put': put_option}
+
     
     async def calculate_break_even_price(self, position_data: Dict, option_type: str) -> float:
         """Calculate break-even price for the remaining position"""
