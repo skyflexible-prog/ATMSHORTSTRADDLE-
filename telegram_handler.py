@@ -284,10 +284,7 @@ class TelegramBot:
         except Exception as e:
             logger.error(f"Error in btc_price_callback: {e}")
             await query.edit_message_text(f"❌ Error fetching price: {str(e)}")
-    
-    # Add this method to the TelegramBot class in telegram_handler.py
-
- async def confirm_execute_callback(self, query):
+    async def confirm_execute_callback(self, query):
     """Execute the short straddle strategy with enhanced stop-loss"""
     await query.edit_message_text("🔄 Executing short straddle strategy with 25% premium stop-loss...")
     
@@ -332,6 +329,10 @@ class TelegramBot:
     except Exception as e:
         logger.error(f"Error in enhanced confirm_execute_callback: {e}")
         await query.edit_message_text(f"❌ **Error:** {str(e)}")
+    
+# Add this method to the TelegramBot class in telegram_handler.py
+
+ 
         
     async def strategy_info_callback(self, query):
         """Show strategy information"""
