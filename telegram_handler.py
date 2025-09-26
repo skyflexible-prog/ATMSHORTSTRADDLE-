@@ -483,7 +483,7 @@ class TelegramBot:
             await query.edit_message_text(f"❌ Error: {str(e)}")
 
     # ... (include all remaining methods from the previous code) ...
-  async def confirm_market_execute_callback(self, query):
+async def confirm_market_execute_callback(self, query):
     """Execute the short straddle strategy with market orders"""
     await query.edit_message_text("⚡ **Executing market orders...** Please wait...")
     
