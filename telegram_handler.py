@@ -285,6 +285,54 @@ class TelegramBot:
             logger.error(f"Error in btc_price_callback: {e}")
             await query.edit_message_text(f"❌ Error fetching price: {str(e)}")
     
+    # Add this method to the TelegramBot class in telegram_handler.py
+
+async def confirm_execute_callback(self, query):
+    """Execute the short straddle strategy with enhanced stop-loss"""
+    await query.edit_message_text("🔄 Executing short straddle strategy with 25% premium stop-loss...")
+    
+    try:
+        result = self.delta_client.execute_short_straddle_with_enhanced_stop_loss(DEFAULT_LOT_SIZE)
+        
+        if result.get('success'):
+            success_text = (
+                f"✅ **Short Straddle Executed Successfully!**\n\n"
+                f"📈 **BTC Spot Price:** ${result['spot_price']:,.2f}\n"
+                f"🎯 **Strike Price:** ${result['strike_price']:,.2f}\n"
+                f"💰 **Total Premium Received:** ${result['total_premium_received']:,.2f}\n\n"
+                f"**Positions Created:**\n"
+            )
+            
+            for order in result['orders']:
+                if order['type'] == 'short_call':
+                    success_text += f"🔸 **Short Call:** ID {order['order_id']} @ ${order['price']:,.2f}\n"
+                elif order['type'] == 'short_put':
+                    success_text += f"🔸 **Short Put:** ID {order['order_id']} @ ${order['price']:,.2f}\n"
+                elif order['type'] == 'call_stop_loss':
+                    success_text += f"🛑 **Call Stop-Loss:** ID {order['order_id']}\n"
+                    success_text += f"   Trigger: ${order['stop_price']:,.2f} (25% increase)\n"
+                elif order['type'] == 'put_stop_loss':
+                    success_text += f"🛑 **Put Stop-Loss:** ID {order['order_id']}\n"
+                    success_text += f"   Trigger: ${order['stop_price']:,.2f} (25% increase)\n"
+            
+            if 'risk_metrics' in result:
+                metrics = result['risk_metrics']
+                success_text += (
+                    f"\n**Risk Metrics:**\n"
+                    f"📊 Max Profit: ${metrics['max_profit']:,.2f}\n"
+                    f"📉 Break-even Range: ${metrics['break_even_lower']:,.2f} - ${metrics['break_even_upper']:,.2f}\n"
+                    f"🎯 Profit Target (50%): ${metrics['profit_target']:,.2f}\n"
+                )
+            
+            await query.edit_message_text(success_text, parse_mode='Markdown')
+        else:
+            error_text = f"❌ **Execution Failed**\n\n{result.get('error', 'Unknown error')}"
+            await query.edit_message_text(error_text, parse_mode='Markdown')
+            
+    except Exception as e:
+        logger.error(f"Error in enhanced confirm_execute_callback: {e}")
+        await query.edit_message_text(f"❌ **Error:** {str(e)}")
+        
     async def strategy_info_callback(self, query):
         """Show strategy information"""
         info_text = (
