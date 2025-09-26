@@ -201,7 +201,7 @@ class DeltaExchangeClient:
         logger.error(f"Failed to find ATM options: {e}")
         return {'call': None, 'put': None}
 
-def _find_atm_from_chain(self, options_data: List[Dict], spot_price: float) -> Dict[str, Optional[Dict]]:
+    def _find_atm_from_chain(self, options_data: List[Dict], spot_price: float) -> Dict[str, Optional[Dict]]:
     """Find ATM options from option chain data"""
     call_option = None
     put_option = None
@@ -237,7 +237,7 @@ def _find_atm_from_chain(self, options_data: List[Dict], spot_price: float) -> D
     
     return {'call': call_option, 'put': put_option}
 
-def _find_closest_expiry_options(self, products_data: List[Dict], spot_price: float) -> Dict[str, Optional[Dict]]:
+    def _find_closest_expiry_options(self, products_data: List[Dict], spot_price: float) -> Dict[str, Optional[Dict]]:
     """Find options with closest expiry (fallback method)"""
     from datetime import datetime, timedelta
     
