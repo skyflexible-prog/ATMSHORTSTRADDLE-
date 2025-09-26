@@ -154,6 +154,7 @@ class DeltaExchangeClient:
     except Exception as e:
         logger.error(f"Failed to find ATM options: {e}")
         return {'call': None, 'put': None}
+
           
     
     async def place_order(self, product_id: int, side: str, size: int, 
