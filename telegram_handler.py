@@ -276,6 +276,79 @@ class TelegramBot:
         except Exception as e:
             logger.error(f"Error in show_portfolio handler: {e}")
             await update.message.reply_text("❌ Error fetching portfolio. Please try again.")
+    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Help command handler"""
+        help_text = (
+            "🤖 **Bot Commands:**\n\n"
+            "/start - Start the bot and show main menu\n"
+            "/status - Check system status and BTC price\n"
+            "/positions - View your open positions\n"
+            "/brackets - View active bracket orders\n"
+            "/help - Show this help message\n\n"
+            "**Trading Features:**\n"
+            "⚡ **Market Orders**: Instant execution at best prices\n"
+            "🛡️ **Bracket Orders**: Automatic 25% stop-loss protection\n"
+            "🎯 **ATM Selection**: Closest strikes to BTC spot price\n\n"
+            "Use the inline buttons for quick access to bot features."
+        )
+        await update.message.reply_text(help_text, parse_mode='Markdown')
+    async def show_positions(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show open positions"""
+        try:
+            user = update.effective_user
+            logger.info(f"Positions command from user {user.id}")
+            
+            positions_response = self.delta_client.get_open_positions()
+            if positions_response.get('success') and positions_response.get('result'):
+                positions = positions_response['result']
+                if positions:
+                    positions_text = "📊 **Open Positions:**\n\n"
+                    for i, position in enumerate(positions[:10], 1):
+                        pnl = float(position.get('unrealized_pnl', 0))
+                        pnl_emoji = "📈" if pnl >= 0 else "📉"
+                        positions_text += (
+                            f"**{i}.** {position.get('product_symbol', 'N/A')}\n"
+                            f"   Size: {position.get('size', 0)}\n"
+                            f"   Entry: ${float(position.get('entry_price', 0)):,.2f}\n"
+                            f"   {pnl_emoji} PnL: ${pnl:,.2f}\n\n"
+                        )
+                else:
+                    positions_text = "📊 No open positions found."
+            else:
+                positions_text = "❌ Failed to fetch positions from Delta Exchange."
+                
+            await update.message.reply_text(positions_text, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"Error in show_positions handler: {e}")
+            await update.message.reply_text("❌ Error fetching positions. Please try again.")
+    async def show_bracket_orders(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show bracket orders"""
+        try:
+            user = update.effective_user
+            logger.info(f"Bracket orders command from user {user.id}")
+            
+            brackets_response = self.delta_client.get_bracket_orders()
+            if brackets_response.get('success') and brackets_response.get('result'):
+                brackets = brackets_response['result']
+                if brackets:
+                    brackets_text = "🛡️ **Active Bracket Orders:**\n\n"
+                    for i, bracket in enumerate(brackets[:5], 1):
+                        brackets_text += (
+                            f"**{i}.** {bracket.get('product_symbol', 'N/A')}\n"
+                            f"   Stop Loss: ${float(bracket.get('stop_loss_price', 0)):,.2f}\n"
+                            f"   Status: {bracket.get('status', 'Unknown')}\n\n"
+                        )
+                else:
+                    brackets_text = "🛡️ No active bracket orders found."
+            else:
+                brackets_text = "❌ Failed to fetch bracket orders."
+                
+            await update.message.reply_text(brackets_text, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"Error in show_bracket_orders handler: {e}")
+            await update.message.reply_text("❌ Error fetching bracket orders. Please try again.")
     
     # ... (include all other methods from previous code) ...
     
@@ -408,6 +481,6 @@ class TelegramBot:
         except Exception as e:
             logger.error(f"Error in view_orders_callback: {e}")
             await query.edit_message_text(f"❌ Error: {str(e)}")
-    
+
     # ... (include all remaining methods from the previous code) ...
   
