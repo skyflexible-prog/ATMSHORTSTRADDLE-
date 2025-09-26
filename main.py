@@ -109,7 +109,7 @@ class DeltaExchangeClient:
             return 0.0
     
     async def find_atm_options(self, spot_price: float) -> Dict[str, Optional[Dict]]:
-    """Find ATM call and put options for same day expiry (D1)"""
+        """Find ATM call and put options for same day expiry (D1)"""
     try:
         # Get today's date in DD-MM-YYYY format for API filtering
         today = datetime.now().strftime("%d-%m-%Y")
