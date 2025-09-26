@@ -287,7 +287,7 @@ class TelegramBot:
     
     # Add this method to the TelegramBot class in telegram_handler.py
 
-async def confirm_execute_callback(self, query):
+ async def confirm_execute_callback(self, query):
     """Execute the short straddle strategy with enhanced stop-loss"""
     await query.edit_message_text("🔄 Executing short straddle strategy with 25% premium stop-loss...")
     
