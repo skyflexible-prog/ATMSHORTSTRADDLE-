@@ -109,40 +109,53 @@ class DeltaExchangeClient:
             return 0.0
     
     async def find_atm_options(self, spot_price: float) -> Dict[str, Optional[Dict]]:
-        """Find ATM call and put options for same day expiry"""
-        try:
-            # Get today's date for same day expiry
-            today = datetime.now().strftime("%d-%m-%Y")
-            
-            # Get BTC options
-            products = await self._make_request('GET', '/products', {
-                'contract_types': 'call_options,put_options'
-            })
-            
-            if not products.get('success'):
-                return {'call': None, 'put': None}
-            
-            call_option = None
-            put_option = None
-            min_diff = float('inf')
-            
-            for product in products['result']:
-                if product['underlying_asset']['symbol'] == 'BTC':
-                    # Check if it's same day expiry (you might need to adjust this logic)
-                    strike_price = float(product.get('strike_price', 0))
-                    diff = abs(strike_price - spot_price)
-                    
-                    if diff < min_diff:
-                        min_diff = diff
-                        if product['contract_type'] == 'call_options':
-                            call_option = product
-                        elif product['contract_type'] == 'put_options':
-                            put_option = product
-            
-            return {'call': call_option, 'put': put_option}
-        except Exception as e:
-            logger.error(f"Failed to find ATM options: {e}")
+    """Find ATM call and put options for same day expiry (D1)"""
+    try:
+        # Get today's date in DD-MM-YYYY format for API filtering
+        today = datetime.now().strftime("%d-%m-%Y")
+        
+        # Get BTC options for today's expiry
+        products = await self._make_request('GET', '/products', {
+            'contract_types': 'call_options,put_options',
+            'underlying_asset_symbols': 'BTC',
+            'expiry_date': today  # Filter by today's date
+        })
+        
+        if not products.get('success') or not products.get('result'):
+            logger.warning("No products found for today's expiry")
             return {'call': None, 'put': None}
+        
+        call_options = []
+        put_options = []
+        
+        # Separate call and put options
+        for product in products['result']:
+            if product['underlying_asset']['symbol'] == 'BTC':
+                strike_price = float(product.get('strike_price', 0))
+                if product['contract_type'] == 'call_options':
+                    call_options.append((product, strike_price))
+                elif product['contract_type'] == 'put_options':
+                    put_options.append((product, strike_price))
+        
+        # Find ATM call option (closest strike to spot price)
+        call_option = None
+        if call_options:
+            call_option = min(call_options, key=lambda x: abs(x[1] - spot_price))[0]
+        
+        # Find ATM put option (closest strike to spot price)
+        put_option = None
+        if put_options:
+            put_option = min(put_options, key=lambda x: abs(x[1] - spot_price))[0]
+        
+        logger.info(f"Found ATM options - Call: {call_option['symbol'] if call_option else 'None'}, Put: {put_option['symbol'] if put_option else 'None'}")
+        
+        return {'call': call_option, 'put': put_option}
+        
+    except Exception as e:
+        logger.error(f"Failed to find ATM options: {e}")
+        return {'call': None, 'put': None}
+
+            
     
     async def place_order(self, product_id: int, side: str, size: int, 
                          order_type: str = "market_order") -> Dict:
