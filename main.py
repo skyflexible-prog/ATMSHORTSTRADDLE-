@@ -287,7 +287,7 @@ class DeltaExchangeClient:
                     'id': product['id'],
                     'symbol': product['symbol'],
                     'strike_price': strike_price,
-                    'contract_type': = 'put_options'
+                    'contract_type': 'put_options'
                 }
         
         return {'call': call_option, 'put': put_option}
