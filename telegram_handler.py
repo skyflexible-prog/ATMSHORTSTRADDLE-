@@ -99,7 +99,26 @@ class TelegramBot:
         except Exception as e:
             logger.error(f"Error in start handler: {e}")
             await update.message.reply_text("❌ Error occurred. Please try /start again.")
-    
+    async def status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Check system status"""
+        try:
+            user = update.effective_user
+            logger.info(f"Status command from user {user.id}")
+            
+            spot_price = self.delta_client.get_btc_spot_price()
+            status_text = (
+                f"🟢 **System Status: Active**\n\n"
+                f"📈 **BTC Spot Price:** ${spot_price:,.2f}\n"
+                f"🔗 **Connected:** Delta Exchange India API\n"
+                f"⚡ **Mode:** Webhook + Market Orders\n"
+                f"🛡️ **Stop-Loss:** 25% Bracket Orders\n"
+                f"🎯 **Strategy:** Short Straddle ATM"
+            )
+            await update.message.reply_text(status_text, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"Error in status handler: {e}")
+            await update.message.reply_text(f"❌ System Error: Unable to fetch status")
     async def show_positions(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show open positions"""
         try:
