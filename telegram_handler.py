@@ -260,47 +260,111 @@ class TelegramBot:
             logger.error(f"Error in execute_market_straddle_callback: {e}")
             await query.edit_message_text("❌ Error occurred. Please try again.")
     
-    async def confirm_market_execute_callback(self, query):
-        """Execute the short straddle strategy with market orders"""
-        await query.edit_message_text("⚡ **Executing market orders...** Please wait...")
+    # Update the confirm_market_execute_callback method in telegram_handler.py
+
+async def confirm_market_execute_callback(self, query):
+    """Execute the short straddle strategy with market orders"""
+    await query.edit_message_text("⚡ **Executing market orders...** Please wait...")
+    
+    try:
+        result = self.delta_client.execute_short_straddle_market(DEFAULT_LOT_SIZE)
         
-        try:
-            result = self.delta_client.execute_short_straddle_market(DEFAULT_LOT_SIZE)
+        if result.get('success'):
+            success_text = (
+                f"✅ **Short Straddle Executed Successfully!**\n\n"
+                f"📈 **BTC Spot Price:** ${result['spot_price']:,.2f}\n"
+                f"🎯 **Strike Price:** ${result['strike_price']:,.2f}\n\n"
+                f"**Market Orders Executed:**\n"
+            )
             
-            if result.get('success'):
-                success_text = (
-                    f"✅ **Short Straddle Executed Successfully!**\n\n"
-                    f"📈 **BTC Spot Price:** ${result['spot_price']:,.2f}\n"
-                    f"🎯 **Strike Price:** ${result['strike_price']:,.2f}\n\n"
-                    f"**Market Orders Executed:**\n"
-                )
-                
-                for order in result['orders']:
-                    if order['type'] == 'short_call_market':
-                        success_text += f"📈 **Call Option:** ID {order['order_id']} @ ${order['price']:,.2f} ✅\n"
-                    elif order['type'] == 'short_put_market':
-                        success_text += f"📉 **Put Option:** ID {order['order_id']} @ ${order['price']:,.2f} ✅\n"
-                
-                success_text += "\n**🛡️ Bracket Orders (25% Stop-Loss):**\n"
-                for bracket in result['bracket_orders']:
-                    if bracket['status'] == 'active':
-                        if bracket['type'] == 'call_bracket':
-                            success_text += f"🛑 **Call Stop-Loss:** @ ${bracket['stop_price']:,.2f} ✅\n"
-                        elif bracket['type'] == 'put_bracket':
-                            success_text += f"🛑 **Put Stop-Loss:** @ ${bracket['stop_price']:,.2f} ✅\n"
-                    else:
-                        success_text += f"⚠️ **{bracket['type']}:** {bracket.get('error', 'Failed')}\n"
-                
-                success_text += "\n🎯 **Strategy Status:** Active with automatic stop-loss protection!"
-                
-                await query.edit_message_text(success_text, parse_mode='Markdown')
+            for order in result['orders']:
+                if order['type'] == 'short_call_market':
+                    success_text += f"📈 **Call Option:** ID {order['order_id']} @ ${order['price']:,.2f} ✅\n"
+                elif order['type'] == 'short_put_market':
+                    success_text += f"📉 **Put Option:** ID {order['order_id']} @ ${order['price']:,.2f} ✅\n"
+            
+            success_text += "\n**🛡️ Reduce-Only Stop Orders (25% Stop-Loss):**\n"
+            for stop in result['stop_orders']:
+                if stop['status'] == 'active':
+                    if stop['type'] == 'call_stop_loss':
+                        success_text += f"🛑 **Call Stop-Loss:** ID {stop['order_id']} @ ${stop['stop_price']:,.2f} ✅\n"
+                    elif stop['type'] == 'put_stop_loss':
+                        success_text += f"🛑 **Put Stop-Loss:** ID {stop['order_id']} @ ${stop['stop_price']:,.2f} ✅\n"
+                else:
+                    success_text += f"⚠️ **{stop['type']}:** {stop.get('error', 'Failed to place')}\n"
+            
+            success_text += "\n🎯 **Strategy Status:** Active with reduce-only stop protection!"
+            
+            await query.edit_message_text(success_text, parse_mode='Markdown')
+        else:
+            error_text = f"❌ **Market Execution Failed**\n\n{result.get('error', 'Unknown error')}"
+            await query.edit_message_text(error_text, parse_mode='Markdown')
+            
+    except Exception as e:
+        logger.error(f"Error in confirm_market_execute_callback: {e}")
+        await query.edit_message_text(f"❌ **Error:** {str(e)}")
+
+# Update the show_orders command to show stop orders
+async def show_orders(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show open orders including stop orders"""
+    try:
+        user = update.effective_user
+        logger.info(f"Orders command from user {user.id}")
+        
+        orders_response = self.delta_client.get_open_orders()
+        if orders_response.get('success') and orders_response.get('result'):
+            orders = orders_response['result']
+            if orders:
+                orders_text = "📋 **Open Orders:**\n\n"
+                for i, order in enumerate(orders[:10], 1):
+                    order_type_emoji = "🛑" if order.get('reduce_only') else "📊"
+                    order_type = "Stop-Loss" if order.get('reduce_only') else "Regular"
+                    orders_text += (
+                        f"{order_type_emoji} **{i}. {order_type}**\n"
+                        f"   ID: {order['id']}\n"
+                        f"   Side: {order['side'].upper()}\n"
+                        f"   Size: {order['size']}\n"
+                        f"   Price: ${float(order.get('limit_price', 0)):,.2f}\n"
+                    )
+                    if order.get('stop_price'):
+                        orders_text += f"   Stop: ${float(order['stop_price']):,.2f}\n"
+                    orders_text += "\n"
             else:
-                error_text = f"❌ **Market Execution Failed**\n\n{result.get('error', 'Unknown error')}"
-                await query.edit_message_text(error_text, parse_mode='Markdown')
-                
-        except Exception as e:
-            logger.error(f"Error in confirm_market_execute_callback: {e}")
-            await query.edit_message_text(f"❌ **Error:** {str(e)}")
+                orders_text = "📋 No open orders found."
+        else:
+            orders_text = "❌ Failed to fetch orders from Delta Exchange."
+            
+        await update.message.reply_text(orders_text, parse_mode='Markdown')
+        
+    except Exception as e:
+        logger.error(f"Error in show_orders handler: {e}")
+        await update.message.reply_text("❌ Error fetching orders. Please try again.")
+
+# Update the strategy info callback
+async def strategy_info_callback(self, query):
+    """Show strategy information"""
+    info_text = (
+        "⚡ **Market Order Short Straddle Strategy**\n\n"
+        "**Execution Method:**\n"
+        "• **Market Orders** for instant execution\n"
+        "• **No slippage protection** - executes at current prices\n"
+        "• **Immediate fills** at best available prices\n\n"
+        "**Risk Management:**\n"
+        "🛡️ **Reduce-Only Stop Orders** with 25% stop-loss\n"
+        "🎯 **ATM strikes** closest to BTC spot\n"
+        "📅 **Same-day expiry** for maximum theta decay\n\n"
+        "**New Feature - Reduce-Only Orders:**\n"
+        "• Replaces deprecated bracket orders\n"
+        "• Only reduces/closes positions (no new positions)\n"
+        "• Better risk control and flexibility\n\n"
+        "**Strategy Details:**\n"
+        "• Sells 1 lot ATM Call + 1 lot ATM Put\n"
+        "• Profits from time decay and low volatility\n"
+        "• **Unlimited risk** - use stop-loss protection\n\n"
+        "⚠️ **Best suited for:** Low volatility environments"
+    )
+    await query.edit_message_text(info_text, parse_mode='Markdown')
+
     
     async def view_positions_callback(self, query):
         """View open positions callback"""
