@@ -532,159 +532,170 @@ class TelegramBot:
             await self.send_message(chat_id, f"❌ Error adjusting position: {str(e)}")
     
     async def execute_short_straddle(self, chat_id: int) -> str:
-        """Execute short straddle strategy with enhanced debugging"""
-        try:
-            position_id = f"straddle_{int(time.time())}"
+    """Execute short straddle strategy with improved stop-loss handling"""
+    try:
+        position_id = f"straddle_{int(time.time())}"
+        
+        # Get BTC spot price
+        spot_price = await self.delta_client.get_spot_price()
+        if spot_price == 0:
+            return "❌ Failed to get BTC spot price"
+        
+        await self.send_message(chat_id, f"📊 BTC Spot Price: ${spot_price:,.2f}")
+        
+        # Find ATM options
+        atm_options = await self.delta_client.find_atm_options(spot_price)
+        call_option = atm_options['call']
+        put_option = atm_options['put']
+        
+        if not call_option or not put_option:
+            return "❌ No ATM options found for short-term expiry\n\n💡 BTC options may not be available for same-day trading"
+        
+        await self.send_message(chat_id, 
+            f"🎯 Found ATM Options:\n"
+            f"📞 Call: {call_option['symbol']} (Strike: ${call_option['strike_price']})\n"
+            f"📞 Put: {put_option['symbol']} (Strike: ${put_option['strike_price']})"
+        )
+        
+        # Execute short straddle
+        results = []
+        call_data = {'product_id': call_option['id'], 'strike_price': call_option.get('strike_price', 0)}
+        put_data = {'product_id': put_option['id'], 'strike_price': put_option.get('strike_price', 0)}
+        
+        # Sell Call Option (1 lot)
+        call_result = await self.delta_client.place_order(
+            product_id=call_option['id'],
+            side='sell',
+            size=1,
+            order_type='market_order'
+        )
+        
+        if call_result.get('success'):
+            call_order = call_result['result']
             
-            # Get BTC spot price
-            spot_price = await self.delta_client.get_spot_price()
-            if spot_price == 0:
-                return "❌ Failed to get BTC spot price"
+            # Get current premium for call option
+            call_premium = await self.delta_client.get_option_premium(call_option['id'])
+            if call_premium == 0:
+                call_premium = 100  # Fallback minimum premium
             
-            await self.send_message(chat_id, f"📊 BTC Spot Price: ${spot_price:,.2f}")
+            call_data.update({
+                'order_id': call_order['id'],
+                'premium_received': call_premium
+            })
+            results.append(f"✅ Call Option Sold: {call_option['symbol']} @ ${call_premium:.1f}")
             
-            # Debug: Check available expiry dates
-            today = datetime.now().strftime("%d-%m-%Y")
-            await self.send_message(chat_id, f"🔍 Looking for options expiring on: {today}")
+            # Calculate reasonable stop-loss (25% above premium or minimum 50 points)
+            call_stop_price = max(call_premium * 1.25, call_premium + 50)
             
-            # Find ATM options with enhanced error reporting
-            atm_options = await self.delta_client.find_atm_options(spot_price)
-            call_option = atm_options['call']
-            put_option = atm_options['put']
-            
-            if not call_option and not put_option:
-                # Try to get available expiry dates for debugging
-                products = await self.delta_client._make_request('GET', '/products', {
-                    'contract_types': 'call_options,put_options'
-                })
-                
-                available_dates = set()
-                if products.get('success'):
-                    for product in products['result'][:10]:  # Check first 10 products
-                        if product['underlying_asset']['symbol'] == 'BTC':
-                            settlement_time = product.get('settlement_time')
-                            if settlement_time:
-                                try:
-                                    settlement_date = datetime.fromisoformat(settlement_time.replace('Z', '+00:00'))
-                                    available_dates.add(settlement_date.strftime("%d-%m-%Y"))
-                                except:
-                                    pass
-                
-                dates_str = ", ".join(list(available_dates)[:5]) if available_dates else "None found"
-                return f"❌ No ATM options found for {today}\n\n📅 Available expiry dates: {dates_str}\n\n💡 Try using weekly (W1) or daily (D1) options instead"
-            
-            if not call_option:
-                return f"❌ ATM call option not found for same day expiry\n📊 Spot: ${spot_price:,.2f}"
-                
-            if not put_option:
-                return f"❌ ATM put option not found for same day expiry\n📊 Spot: ${spot_price:,.2f}"
-            
-            await self.send_message(chat_id, 
-                f"🎯 Found ATM Options:\n"
-                f"📞 Call: {call_option['symbol']} (Strike: ${call_option['strike_price']})\n"
-                f"📞 Put: {put_option['symbol']} (Strike: ${put_option['strike_price']})"
-            )
-            
-            # Execute short straddle (sell call and put)
-            results = []
-            call_data = {'product_id': call_option['id'], 'strike_price': call_option.get('strike_price', 0)}
-            put_data = {'product_id': put_option['id'], 'strike_price': put_option.get('strike_price', 0)}
-            
-            # Sell Call Option (1 lot)
-            call_result = await self.delta_client.place_order(
+            # Place stop-loss for call with validation
+            stop_result = await self.delta_client.place_stop_order(
                 product_id=call_option['id'],
-                side='sell',
+                side='buy',  # Buy to close short position
                 size=1,
-                order_type='market_order'
+                stop_price=str(round(call_stop_price, 1)),
+                order_type='stop_limit_order',
+                current_premium=call_premium
             )
             
-            if call_result.get('success'):
-                call_order = call_result['result']
-                call_data.update({
-                    'order_id': call_order['id'],
-                    'premium_received': call_order.get('limit_price', 0)
-                })
-                results.append(f"✅ Call Option Sold: {call_option['symbol']}")
-                
-                # Calculate 25% premium increase for stop-loss
-                call_price = float(call_order.get('limit_price', 0))
-                call_stop_price = call_price * 1.25  # 25% increase
-                
-                # Place stop-loss for call
-                stop_result = await self.delta_client.place_stop_order(
+            if stop_result.get('success'):
+                call_data['stop_order_id'] = stop_result['result']['id']
+                call_data['stop_price'] = call_stop_price
+                results.append(f"🛡️ Call Stop-Loss placed at ${call_stop_price:.1f}")
+            else:
+                error_msg = stop_result.get('error', {}).get('message', 'Unknown error')
+                results.append(f"⚠️ Call Stop-Loss failed: {error_msg}")
+                # Try with market stop order as fallback
+                market_stop = await self.delta_client.place_stop_order(
                     product_id=call_option['id'],
-                    side='buy',  # Buy to close short position
+                    side='buy',
                     size=1,
-                    stop_price=str(call_stop_price),
-                    order_type='stop_limit_order',
-                    limit_price=str(call_stop_price * 1.02)  # 2% slippage
+                    stop_price=str(round(call_stop_price, 1)),
+                    order_type='stop_market_order',
+                    current_premium=call_premium
                 )
-                
-                if stop_result.get('success'):
-                    call_data['stop_order_id'] = stop_result['result']['id']
-                    call_data['stop_price'] = call_stop_price
-                    results.append(f"🛡️ Call Stop-Loss placed at ${call_stop_price:.2f}")
-                else:
-                    results.append(f"⚠️ Call Stop-Loss failed: {stop_result.get('error', {}).get('message', 'Unknown error')}")
-            else:
-                results.append(f"❌ Call Option failed: {call_result.get('error', {}).get('message', 'Unknown error')}")
+                if market_stop.get('success'):
+                    call_data['stop_order_id'] = market_stop['result']['id']
+                    results.append(f"🛡️ Call Market Stop placed at ${call_stop_price:.1f}")
+        else:
+            error_msg = call_result.get('error', {}).get('message', 'Unknown error')
+            results.append(f"❌ Call Option failed: {error_msg}")
+        
+        # Sell Put Option (1 lot) - Similar logic
+        put_result = await self.delta_client.place_order(
+            product_id=put_option['id'],
+            side='sell',
+            size=1,
+            order_type='market_order'
+        )
+        
+        if put_result.get('success'):
+            put_order = put_result['result']
             
-            # Sell Put Option (1 lot)
-            put_result = await self.delta_client.place_order(
+            # Get current premium for put option
+            put_premium = await self.delta_client.get_option_premium(put_option['id'])
+            if put_premium == 0:
+                put_premium = 100  # Fallback minimum premium
+            
+            put_data.update({
+                'order_id': put_order['id'],
+                'premium_received': put_premium
+            })
+            results.append(f"✅ Put Option Sold: {put_option['symbol']} @ ${put_premium:.1f}")
+            
+            # Calculate reasonable stop-loss
+            put_stop_price = max(put_premium * 1.25, put_premium + 50)
+            
+            # Place stop-loss for put
+            stop_result = await self.delta_client.place_stop_order(
                 product_id=put_option['id'],
-                side='sell',
+                side='buy',
                 size=1,
-                order_type='market_order'
+                stop_price=str(round(put_stop_price, 1)),
+                order_type='stop_limit_order',
+                current_premium=put_premium
             )
             
-            if put_result.get('success'):
-                put_order = put_result['result']
-                put_data.update({
-                    'order_id': put_order['id'],
-                    'premium_received': put_order.get('limit_price', 0)
-                })
-                results.append(f"✅ Put Option Sold: {put_option['symbol']}")
-                
-                # Calculate 25% premium increase for stop-loss
-                put_price = float(put_order.get('limit_price', 0))
-                put_stop_price = put_price * 1.25  # 25% increase
-                
-                # Place stop-loss for put
-                stop_result = await self.delta_client.place_stop_order(
-                    product_id=put_option['id'],
-                    side='buy',  # Buy to close short position
-                    size=1,
-                    stop_price=str(put_stop_price),
-                    order_type='stop_limit_order',
-                    limit_price=str(put_stop_price * 1.02)  # 2% slippage
-                )
-                
-                if stop_result.get('success'):
-                    put_data['stop_order_id'] = stop_result['result']['id']
-                    put_data['stop_price'] = put_stop_price
-                    results.append(f"🛡️ Put Stop-Loss placed at ${put_stop_price:.2f}")
-                else:
-                    results.append(f"⚠️ Put Stop-Loss failed: {stop_result.get('error', {}).get('message', 'Unknown error')}")
+            if stop_result.get('success'):
+                put_data['stop_order_id'] = stop_result['result']['id']
+                put_data['stop_price'] = put_stop_price
+                results.append(f"🛡️ Put Stop-Loss placed at ${put_stop_price:.1f}")
             else:
-                results.append(f"❌ Put Option failed: {put_result.get('error', {}).get('message', 'Unknown error')}")
-            
-            # Track the position for monitoring
-            self.order_tracker.add_position(position_id, call_data, put_data)
-            
-            # Start monitoring task
-            monitoring_task = asyncio.create_task(
-                self.monitor_stop_orders(position_id, chat_id)
-            )
-            self.order_tracker.monitoring_tasks[position_id] = monitoring_task
-            
-            results.append(f"\n🔍 <b>Monitoring Active</b>\n📋 Position ID: {position_id}")
-            results.append("🤖 Auto break-even adjustment enabled")
-            
-            return "\n".join(results)
-            
-        except Exception as e:
-            logger.error(f"Short straddle execution failed: {e}")
-            return f"❌ Strategy execution failed: {str(e)}"
+                error_msg = stop_result.get('error', {}).get('message', 'Unknown error')
+                results.append(f"⚠️ Put Stop-Loss failed: {error_msg}")
+                # Try market stop as fallback
+                market_stop = await self.delta_client.place_stop_order(
+                    product_id=put_option['id'],
+                    side='buy',
+                    size=1,
+                    stop_price=str(round(put_stop_price, 1)),
+                    order_type='stop_market_order',
+                    current_premium=put_premium
+                )
+                if market_stop.get('success'):
+                    put_data['stop_order_id'] = market_stop['result']['id']
+                    results.append(f"🛡️ Put Market Stop placed at ${put_stop_price:.1f}")
+        else:
+            error_msg = put_result.get('error', {}).get('message', 'Unknown error')
+            results.append(f"❌ Put Option failed: {error_msg}")
+        
+        # Track the position for monitoring
+        self.order_tracker.add_position(position_id, call_data, put_data)
+        
+        # Start monitoring task
+        monitoring_task = asyncio.create_task(
+            self.monitor_stop_orders(position_id, chat_id)
+        )
+        self.order_tracker.monitoring_tasks[position_id] = monitoring_task
+        
+        results.append(f"\n🔍 <b>Enhanced Monitoring Active</b>\n📋 Position ID: {position_id}")
+        results.append("🤖 Auto break-even adjustment enabled")
+        
+        return "\n".join(results)
+        
+    except Exception as e:
+        logger.error(f"Short straddle execution failed: {e}")
+        return f"❌ Strategy execution failed: {str(e)}"
+
 
 # Global instances
 delta_client = None
