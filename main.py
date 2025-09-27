@@ -323,20 +323,80 @@ class DeltaExchangeClient:
         return await self._make_request('POST', '/orders', data=data)
     
     async def place_stop_order(self, product_id: int, side: str, size: int,
-                              stop_price: str, order_type: str = "stop_limit_order",
-                              limit_price: str = None) -> Dict:
-        """Place a stop-loss order"""
+                          stop_price: str, order_type: str = "stop_limit_order",
+                          limit_price: str = None, current_premium: float = 0) -> Dict:
+    """Place a stop-loss order with proper validation"""
+    try:
+        # Validate stop price for options
+        stop_price_float = float(stop_price)
+        
+        # For options, ensure minimum price increments and reasonable values
+        if current_premium > 0:
+            # Ensure stop price is reasonable (not more than 5x current premium)
+            if stop_price_float > current_premium * 5:
+                logger.warning(f"Stop price {stop_price_float} too high, adjusting to {current_premium * 2}")
+                stop_price = str(round(current_premium * 2, 2))
+                stop_price_float = current_premium * 2
+        
+        # Ensure minimum price increment (typically 0.1 for BTC options)
+        stop_price = str(round(stop_price_float, 1))
+        
+        # Set limit price if not provided (slightly better than stop price)
+        if not limit_price:
+            if side.lower() == 'buy':
+                limit_price = str(round(stop_price_float * 1.02, 1))  # 2% higher for buy
+            else:
+                limit_price = str(round(stop_price_float * 0.98, 1))  # 2% lower for sell
+        
         data = {
             'product_id': product_id,
             'side': side,
             'size': size,
             'order_type': order_type,
-            'stop_price': stop_price
+            'stop_price': stop_price,
+            'limit_price': limit_price,
+            'time_in_force': 'GTC'  # Good Till Cancel
         }
-        if limit_price:
-            data['limit_price'] = limit_price
+        
+        logger.info(f"Placing stop order: {data}")
+        result = await self._make_request('POST', '/orders', data=data)
+        
+        if not result.get('success'):
+            error_msg = result.get('error', {}).get('message', 'Unknown error')
+            logger.error(f"Stop order failed: {error_msg}")
             
-        return await self._make_request('POST', '/orders', data=data)
+        return result
+        
+    except Exception as e:
+        logger.error(f"Failed to place stop order: {e}")
+        return {'success': False, 'error': {'message': str(e)}}
+
+async def get_option_premium(self, product_id: int) -> float:
+    """Get current premium/mark price for an option"""
+    try:
+        # Get product details to find symbol
+        products = await self._make_request('GET', '/products')
+        if not products.get('success'):
+            return 0.0
+            
+        product_symbol = None
+        for product in products['result']:
+            if product['id'] == product_id:
+                product_symbol = product['symbol']
+                break
+                
+        if not product_symbol:
+            return 0.0
+            
+        # Get current ticker/premium
+        ticker = await self.get_ticker(product_symbol)
+        if ticker.get('success'):
+            return float(ticker['result'].get('mark_price', 0))
+        return 0.0
+        
+    except Exception as e:
+        logger.error(f"Failed to get option premium: {e}")
+        return 0.0
 
 class TelegramBot:
     """Enhanced Telegram Bot Handler with position monitoring"""
