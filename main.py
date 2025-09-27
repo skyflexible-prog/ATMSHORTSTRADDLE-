@@ -371,7 +371,7 @@ class DeltaExchangeClient:
         logger.error(f"Failed to place stop order: {e}")
         return {'success': False, 'error': {'message': str(e)}}
 
-async def get_option_premium(self, product_id: int) -> float:
+    async def get_option_premium(self, product_id: int) -> float:
     """Get current premium/mark price for an option"""
     try:
         # Get product details to find symbol
